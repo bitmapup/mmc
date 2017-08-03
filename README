@@ -1,0 +1,6 @@
+#All paths are specified in the file config.cfg
+
+#This script uses python 2.7
+
+#How to lunch the script:
+#python2 main_mt.py config.cfg
