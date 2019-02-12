@@ -1,4 +1,4 @@
-from mobilitytrace import MobilityTrace
+from trace import Trace
 import numpy
 import logging
 import sys
@@ -25,14 +25,14 @@ class Day (object):
 
 class Mmc(object):
 
-    def __init__ (self,cluster,trailMobilityTrace,userid,
+    def __init__ (self,states,trailTrace,userid,
             order = 1,
             daysArray=[False,False,False,False,False,False,False,True,True,False],
             timeSlices = 4,
             radius = 0.1):
         """
-            cluster: is the dictionary containning the groups in the form of inde:[set of mt, medioid]
-            trailMobilityTrace: is the list of mobility traces objects
+            state: is a set containning the states of the MMC 
+            trailTrace: is the list of mobility traces objects
             order: is the number of points of interest (poi) to remember in the model
             daysArray: is an boolean array of 10 positions where 0 is monday to 6 sunday, 7 is weekdays,
             8 is weekends and 9 is all days  [False,False,False,False,False,False,False,True,True,False]
@@ -40,8 +40,8 @@ class Mmc(object):
             timelabels, is a dictionary containig the begin-end time of a windows time
             radius, in Km is the distance threshold to decide if a point is within the POI or not
         """
-        self._pois = cluster.dict_clusters
-        self._trailMobilityTrace = trailMobilityTrace
+        self._states = states
+        self._trailTrace = trailTrace
         self._user = userid
         self._order = order
         """ there are 3 cases: we can check only days from monday to sunday,
@@ -85,7 +85,17 @@ class Mmc(object):
         #These dictionaries stock the trajectories from one poi A to another poi B
         #in the form of [POI_origin,POI_destination]: [[mt_1, mt_2, ... mt_n],[mt_1',mt_2', .., mt_n']]
         self._dict_trajectory = dict() #trajectories are represented by spatial labels: 0, 1, 2 ..
-        self._dict_mt_trajectory = dict() ##trajectories are represented by mobility traces
+        
+        #Buy category vector spent
+        self._spentVector = [0] * len(self._states)
+        #Buy category vector quantity
+        self._quantityVector = [0] * len(self._states)
+        #Buy category vector spent/quantity
+        self._spentQuantityVector = [0] * len(self._states)
+        #Entropy
+        self._shannonEntropy = -0
+        #Predictability
+        self._predictability = -0 
 
 ############################################
 #          Overwrite methods               #
@@ -162,7 +172,7 @@ class Mmc(object):
         """
         aux_spatioTemporalLabels = []
         #get pois labels
-        poi_labels = self._pois.keys()##.getClusters
+        poi_labels = list(self._states)
         #make the combination of places
         #we only take into account the two first orders (n=1 n=2)
         size = len(poi_labels)
@@ -214,7 +224,9 @@ class Mmc(object):
         # buildCumulatedStationary
         logging.info("Calculating cumulated stationary vector")
         self.__buildCumulatedStationary__()
-        logging.info("Model built successfully !")
+        logging.info("Calculating spent and quantity vector")
+        self.buildSpentQuanityVector() 
+        #logging.info("Model built successfully !")
     #end buildModel
 
 
@@ -223,82 +235,18 @@ class Mmc(object):
 ########################################
 
 
-    def __getSpatialLabel__ (self, mobilityTrace, dist_based = True):
+    def __getSpatialLabel__ (self, trace):
         """ Take as input: a mobility trace and
             returns the id of the label     """
         id_poi = -1
 
-        for key in self._pois:
-            group =  self._pois[key]
-            medioid = group[1]
+        id_poi =  trace.mcc
+        index =  self._states.index(trace.mcc)
 
-            if (dist_based):
-                if ( mobilityTrace.distance(medioid) <= self._radius ):
-                    id_poi = key
-                    break
-            else:
-                for mt in group[0]:
-                    if (mobilityTrace.cellid ==  mt.cellid):
-                        id_poi = key
-
-        return id_poi
+        return index,id_poi
     #end def
 
 
-    def __extractTrajectories__(self):
-        dict_trajectory = dict()
-        dict_mt_trajectory = dict()
-
-        size = len(self._spatialLabelRaw)
-        i = 0
-        begin_label = -2
-        end_label = -2
-        aux_trajectory = [] #labels
-        aux_mt_trajectory = [] #mobility traces
-        while (i < size-1 ):
-            label = self._spatialLabelRaw[i][1]
-            label_1 = self._spatialLabelRaw[i+1][1]
-            #Detecting the begining of a trajectory
-            if ( (label > -1) & (label != label_1) ):
-                begin_label = label
-                begin_trajectory = self._trailMobilityTrace[i]
-                j = i+1
-                #looking for the end of the trajectory
-                while (j < size -1):
-                    label = self._spatialLabelRaw[j][1]
-                    aux_label = self._spatialLabelRaw[j]
-                    if (label > -1):
-                        end_label = label
-                        end_trajectory = self._trailMobilityTrace[j]
-                        i = j + 1
-                        break
-                    else:
-                        aux_trajectory.append(aux_label)
-                        aux_mt_trajectory.append(self._trailMobilityTrace[j])
-                    j += 1
-                #end while (j < size -1)
-            if ( int(begin_label)!=-2 & int(end_label)!=-2 & len(aux_trajectory)>0):
-                aux_tuple = (begin_label,end_label)
-                key_tuple = (begin_label,end_label)
-                #key_tuple = (begin_trajectory,end_trajectory)
-                #insert into the dictionary
-                if (aux_tuple in dict_trajectory):
-                    dict_trajectory[aux_tuple].append(aux_trajectory)
-                    dict_mt_trajectory[key_tuple].append(aux_mt_trajectory)
-                elif ( int(begin_label)!=-2 & int(end_label)!=-2):
-                    dict_trajectory[aux_tuple]=[aux_trajectory]
-                    dict_mt_trajectory[key_tuple] = [aux_mt_trajectory]
-
-                #reinitialize
-                begin_label = -2
-                end_label = -2
-                aux_trajectory = []
-                aux_mt_trajectory = []
-            i += 1
-        self._dict_mt_trajectory = dict_mt_trajectory
-
-        return dict_trajectory
-    #end __getTrajectories__
 
     def printTrajectories(self):
         """
@@ -350,9 +298,9 @@ class Mmc(object):
         if len(self._dict_mt_trajectory) != 0:
             for key in self._dict_mt_trajectory:
                 index_origin = key[0]
-                origin_mt = (self._pois[index_origin])[-1]
+                origin_mt = (self._states[index_origin])[-1]
                 index_destination = key[1]
-                destination_mt = (self._pois[index_destination])[-1]
+                destination_mt = (self._states[index_destination])[-1]
 
                 #Do not show loops
                 if index_origin == index_destination:
@@ -386,23 +334,21 @@ class Mmc(object):
         """ loop over all the trail of mobility trace to label the pois  """
         spatialLabels = []
 
-        if (len(self._trailMobilityTrace)>1):
+        if (len(self._trailTrace)>1):
             i = 0
             #generate spatial labels
-            for mt in self._trailMobilityTrace:
-                index = self.__getSpatialLabel__(mt,False)
-                spatialLabels.append([i,index])
+            for mt in self._trailTrace:
+                index,mcc = self.__getSpatialLabel__(mt)
+                spatialLabels.append([index,mcc])
                 i += 1
             #print "labels {0}: ".format(spatialLabels)
             self._spatialLabelRaw = spatialLabels
             #extracts trajectories from mobility traces
             #We have to verify how to get tracetories: _spatialLabelRaw contains index to delimit
-#begin and end of a trajectory
-            self._dict_trajectory =  self.__extractTrajectories__()
             #erase unknown
-            self.__eraseUnknownTraces__()
+            #self.__eraseUnknownTraces__()
             #print "{0}".format(self._spatialLabelRaw)
-            self.__squash__()
+            #self.__squash__()
             #print "{0}".format(self._spatialLabelRaw)
         else:
             logging.info("Trail of mobility traces dosen't have traces")
@@ -414,7 +360,7 @@ class Mmc(object):
         """ Erases all labels =  -1 i.e. unknown"""
         index = len(self._spatialLabelRaw)-1
         while (index >=  0):
-            if (self._spatialLabelRaw[index][1] ==-1):
+            if (self._spatialLabelRaw[index][1] ==""):
                 del self._spatialLabelRaw[index]
             index -=1
     #eraseUnknownTraces
@@ -425,7 +371,7 @@ class Mmc(object):
         size = len(self._spatialLabelRaw)-1
         index = 0
         while (index <  size):
-            if (self._spatialLabelRaw[index][1] == self._spatialLabelRaw[index+1][1]):
+            if (self._spatialLabelRaw[index] == self._spatialLabelRaw[index+1]):
                 index_to_erase.append(index)
             index += 1
 
@@ -456,7 +402,7 @@ class Mmc(object):
                 #gets the index of the mobility trace
                 index = self._spatialLabelRaw[i][0]
                 #get the mobility trace
-                mt = self._trailMobilityTrace[index]
+                mt = self._trailTrace[index]
                 aux_list = self.__getTimeWindows__(mt)
                 if (len(aux_list)>0):
                    t_day = aux_list[0]
@@ -513,6 +459,29 @@ class Mmc(object):
         else:
             return False
 
+#################################################
+#   spent and quantity vector  construction     #
+#################################################
+
+    def buildSpentQuanityVector(self):
+    
+      if (len(self._trailTrace)>0):
+        for t in self._trailTrace:
+          if (t.mcc in self._states):
+            index = self._states.index(t.mcc)
+            self._spentVector[index]+=float(t._spend)
+            self._quantityVector[index]+=1
+
+        i = 0
+        size = len(self.spentVector) 
+        while (i<size):
+           self._spentQuantityVector[i]=self._spentVector[i]/self._quantityVector[i]
+           i += 1
+      else:
+        print ("The model do not have any trace!!!") 
+
+    #end buildSpentQuanityVector
+
 #########################################
 #   Transition matrix  construction     #
 #########################################
@@ -540,7 +509,9 @@ class Mmc(object):
         if (local):
             index = len(self._spatioTemporalLabels)-1
             #Erases rows and columns without value
-        
+            r = len(self._countMatrix)    
+            c = len(self._countMatrix[0])    
+            print ("before count: r:",r," c:",c)
             print "before count: \n {0}".format(self._countMatrix)
 
             while (index >= 0):
@@ -551,8 +522,14 @@ class Mmc(object):
                     print "axis=1 count: \n {0}".format(self._countMatrix)
                     
                     del self._spatioTemporalLabels[index]
+                    del self._states[index]
+                    del self._spentVector[index] 
+                    del self._quantityVector[index]
+                    del self._spentQuantityVector[index] 
                 index -= 1
-
+            r = len(self._countMatrix)    
+            c = len(self._countMatrix[0])    
+            print ("after count: r:",r," c:",c)
             print "after count: \n {0}".format(self._countMatrix)
 
         #Normalize matrix (L1 norm)
@@ -599,7 +576,7 @@ class Mmc(object):
 
     def __buildCumulatedStationary__(self):
         #get pois labels
-        poi_labels = self._pois.keys()##.getClusters
+        poi_labels = self._states
         size = len(self._spatioTemporalLabels)
         i = 0
         while (i < size):
@@ -609,7 +586,6 @@ class Mmc(object):
             else:
                 self._cumulatedStationary[index] = self._stationaryVector[0][i]
             i += 1
-#aqui
     #end __buildCumulatedStationary__
 
 #################################################
@@ -618,7 +594,7 @@ class Mmc(object):
     def __repr__ (self):
         strResult = "Model parameters \n"
         strResult += "================ \n"
-        strResult += "Number of traces: {0} \n".format(len(self._trailMobilityTrace))
+        strResult += "Number of traces: {0} \n".format(len(self._trailTrace))
         strResult += "Order: {0} \n".format(self._order)
         strResult += "Selected days for the model: \n"
         strResult += "\t Weekdays: Monday: {0}, Tuesday: {1}, Wednesday: {2}, Thursday: {3}, Friday: {4} \n".format(self._daysArrayBoolean[0],self._daysArrayBoolean[1],self._daysArrayBoolean[2],self._daysArrayBoolean[3],self._daysArrayBoolean[4])
@@ -636,8 +612,8 @@ class Mmc(object):
         strResult += "POIs: \n"
         strResult += "index : density of cluster, lat, long medioid \n"
 
-        for keys in self._pois:
-            aux_list=self._pois[keys]
+        for keys in self._states:
+            aux_list=self._states[keys]
             strResult +="{0}: {1},{2} \n".format(keys,len(aux_list[0]),aux_list[1])
 
 
@@ -662,27 +638,61 @@ class Mmc(object):
 
 
         return strResult
+
+#################################################
+#           __str__ overwrite                  #
+#################################################
+    def __str__ (self):
+        strf = "%0.2f %0.2f" % (
+               self.shannonEntropy,
+               self.predictability
+               )
+        return strf
 ############################################
 #               Properties                 #
 ############################################
     @property
     def getPoi(self):
-        return self._pois
+        return self._states
 
     @property
     def getTimeLabels(self):
         return self._timeLabels
 
     @property
-    def trailMobilityTrace(self):
-        return self._trailMobilityTrace
-    @trailMobilityTrace.setter
-    def trailMobilityTrace(self,trailMobilityTrace):
-        self._trailMobilityTrace = trailMobilityTrace
+    def trailTrace(self):
+        return self._trailTrace
+    @trailTrace.setter
+    def trailTrace(self,trailTrace):
+        self._trailTrace = trailTrace
 
     @property
     def stationaryVector(self):
         return self._stationaryVector
+
+    @property
+    def spentVector(self):
+        return self._spentVector
+    @property
+    def quantityVector(self):
+        return self._quantityVector 
+    @property
+    def spentQuantityVector(self):
+        return self._spentQuantityVector 
+
+    @property
+    def shannonEntropy(self):
+        return self._shannonEntropy 
+    @shannonEntropy.setter
+    def shannonEntropy(self,shannonEntropy):
+        self._shannonEntropy = shannonEntropy
+
+    @property
+    def predictability(self):
+        return self._predictability
+    @predictability.setter
+    def predictability(self,predictability):
+           self._predictability = predictability
 
 
 #############################################
@@ -705,134 +715,45 @@ class Mmc(object):
 #############################################
 #       Distance between mmc                #
 #############################################
-    def distance (self,oMmc,method="stationary",threshold=1):
-        result = 0
-        if  (method == "stationary"):
-            result = self.stationaryDistance(oMmc)
-        elif(method == "relative"):
-            result = self.relativeDistance(oMmc,threshold)
-        else:
-            result = self.coverageRate(oMmc,threshold)
-        return result
-    #end distance
+
     def __stationaryMetric__(self, oMmc):
         """ this method computes the distance in Km between 2 mmc models,
             this metric uses the stationary vector to weight the distance
         """
-        distance = 0
+        distance = [-1] * 3
+        distance_spent = 0
+        distance_quantity = 0
+        distance_spendQuantity = 0
+        #looks for the closest poi in the other model
+        for st in self._states:
+            if (st in self._states and st in oMmc._states):
+               i = self._states.index(st)
+               j = oMmc._states.index(st)
+               distance_spent += abs(self.spentVector[i]-oMmc.spentVector[j])*self._cumulatedStationary[str(st)]
+               distance_quantity += abs(self.quantityVector[i]-oMmc.quantityVector[j])*self._cumulatedStationary[str(st)]
+               distance_spendQuantity += abs(self.spentQuantityVector[i]-oMmc.spentQuantityVector[j])*self._cumulatedStationary[str(st)]
+        
+        distance = [distance_spent,distance_quantity,distance_spendQuantity]
+	return distance
 
-        for key in self._cumulatedStationary:
-            group =  self._pois[key]
-            medioid = group[1]
-            aux_distance = 1000000
-
-            #looks for the closest poi in the other model
-            for okey in oMmc._pois:
-                oGroup =  oMmc._pois[okey]
-                oMedioid = oGroup[1]
-                aux = medioid.distance(oMedioid)
-                if (aux < aux_distance):
-                    aux_distance = aux
-            #add the distance weighted by the stationary value
-            distance += aux_distance * self._cumulatedStationary[key]
-            aux_distance = 1000000
-        return distance
-
-    def stationaryDistance(self, oMmc):
-        stat_distance = (self.__stationaryMetric__(oMmc) + oMmc.__stationaryMetric__(self))/2
-        if (stat_distance == None):
-            stat_distance = 0
-        return stat_distance
-    # stationaryDistance
-
-    def relativeDistance(self,oMmc, pThreshold=1):
-        """This method measure the relativge distance based on importance of places
-            the first POIs is twice iportant than the second and so on. The smaller the
-            distance the more likely models are.
-        """
-        size = -1
-        threshold = pThreshold #Km
-        score = 0
-        importance = 10
-        """
-        if ( len(self._pois) >= len(oMmc._pois) ):
-            size = len(oMmc._pois)
-        else:
-            size = len(self._pois)
-        """
-        values = self._cumulatedStationary.items()
-        oValues = oMmc._cumulatedStationary.items()
-
-        sorted(values, key=itemgetter(1), reverse=True)
-        sorted(oValues,key=itemgetter(1), reverse=True)
-
-        if ( len(values) >= len(oValues) ):
-            size = len(oValues)
-        else:
-            size = len(values)
+    def distance(self, oMmc):
+        ds_i = self.__stationaryMetric__(oMmc)
+        ds_j = oMmc.__stationaryMetric__(self)
+        dsi = ds_i[0] 
+        dqi = ds_i[1] 
+        dsqi = ds_i[2]  
+        dsj = ds_j[0]
+        dqj = ds_j[1]
+        dsqj = ds_j[2]
+        ds = (dsi + dsj)/2
+        dq = (dqi + dqj)/2
+        dsq = (dsqi + dsqj)/2
+        
+        dist =  [ds,dq,dsq]
+        return dist
+    # distance
 
 
-        #print "{0} : {1} \ {2}".format (len(oMmc._pois),len(self._pois),size)
-        i = 0
-        while (i < size):
-            index = (values[i])[0]
-            medioid = (self._pois[index])[1]
-            """
-            print ("{0}".format(i))
-            print ("{0}".format(oValues[i]))
-
-            if ((size == 4) & (i == 0)):
-                print "{0}\n".format(values)
-                print "{0}\n".format(oValues)
-                print "{0}\n".format(self._cumulatedStationary)
-                print "{0}\n".format(oMmc._cumulatedStationary)
-                print "{0}".format(oMmc)
-            """
-            oIndex = (oValues[i])[0]
-            oMedioid = (oMmc._pois[oIndex])[1]
-            distance = medioid.distance(oMedioid)
-
-            if (distance < threshold):
-                score += importance
-
-            importance /= 2
-            i += 1
-
-        distance = 300000
-
-        if (score > 0):
-            distance = 1.0/score
-
-        return distance
-    #end relativeDistance
-
-    def coverageRate (self, oMmc, threshold = 1):
-        coverage_rate = 0
-        coverage = 0
-
-        for key in self._cumulatedStationary:
-            group =  self._pois[key]
-            medioid = group[1]
-            aux_distance = 1000000
-            #looks for the closest poi in the other model
-            for okey in oMmc._pois:
-                oGroup =  oMmc._pois[okey]
-                oMedioid = oGroup[1]
-                aux = medioid.distance(oMedioid)
-
-                if (aux < aux_distance):
-                    aux_distance = aux
-
-            #add the distance weighted by the stationary value
-            if ( aux_distance <= threshold ):
-                coverage += 1
-
-            aux_distance = 1000000
-        if (coverage > 0):
-            coverage_rate = 1.0/coverage
-
-        return coverage_rate
-    #end def coverageRate
 
 #############################################
 #       Inner properties in mmc             #
@@ -849,8 +770,8 @@ class Mmc(object):
         for item in aStationaryVec:
             if (item != 0):
                 entropy += item*math.log(item,2)
-
-        return entropy*-1
+        self.shannonEntropy = entropy*-1
+        return self.shannonEntropy
     #end shannonEntropy
 
     def shannonEntropyTime(self):
@@ -884,8 +805,8 @@ class Mmc(object):
             #print self._stationaryVector.shape
             predictability +=  self._stationaryVector[0,row] * maxValueRow
             row += 1
-
-        return predictability
+        self.predictability = predictability
+        return self.predictability
     #end predictability(self):
 
 
@@ -930,26 +851,26 @@ class Mmc(object):
             return None
         else:
             #map pois of both models common pois
-            close_poiss_dict = Mmc.mapClosePois(aMmc,bMmc,0.1)
+            close_statess_dict = Mmc.mapClosePois(aMmc,bMmc,0.1)
             #merge transition matrix
-            newMatrixTransition,newMatrixLabels = mergeTransMatrix(aMmc,bMmc,close_poiss_dict)
+            newMatrixTransition,newMatrixLabels = mergeTransMatrix(aMmc,bMmc,close_statess_dict)
             #merge trajectories matrix
             #Test with new QTS will be on-line
-            #/!\ new_trajectory = newTrajectories(aMmc,bMmc,close_poiss_dict)
+            #/!\ new_trajectory = newTrajectories(aMmc,bMmc,close_statess_dict)
             #Map clusters
             #change poi names
-            new_pois = newPois(aMmc,bMmc,close_pois_dict)
+            new_states = newPois(aMmc,bMmc,close_states_dict)
             #(re)compute stationary vector
             #(re)compute cumulated stationary vector
     #end mergeMmc
 
 
     @classmethod
-    def newPois(cls, aMmc,bMmc,close_pois_dict,addMobilityTraces=True):
+    def newPois(cls, aMmc,bMmc,close_states_dict,addMobilityTraces=True):
         """
         """
-        aPois = aMmc._pois
-        bPois = bMmc._pois
+        aPois = aMmc._states
+        bPois = bMmc._states
 
         #Mapping pois from model A
         for aKey in aPois.keys():
@@ -958,13 +879,13 @@ class Mmc(object):
 
         #Mapping pois from model B
         aux_dict=dict()
-        for key, val in close_pois_dict.items():
+        for key, val in close_states_dict.items():
             if (len(val) > 0):
                 aux_dict[key]=val
 
         for bKey in bPois.keys():
             aux_label = str(bKey)+'b'
-            if ( aux_label in close_pois_dict.keys() ):
+            if ( aux_label in close_states_dict.keys() ):
                 bPois[aux_label]=bPois.pop(bKey)
             else:
                 for auxKey, val in aux_dict.items():
@@ -973,45 +894,45 @@ class Mmc(object):
                         if (item == bKey):
                             bPois[auxKey]=bPois.pop(bKey)
 
-        new_pois = dict()
+        new_states = dict()
         if (addMobilityTraces):
             #merging Poi dictionaries
 
             for aKey in aPois.keys():
-                    new_pois[aKey] = aPois[aKey]
+                    new_states[aKey] = aPois[aKey]
 
             for bKey in bPois.keys():
-                if (bKey in new_pois):
-                    (new_pois[bKey])[0]  = set ( list((new_pois[bKey])[0])+ list((bPois[bKey])[0]))
+                if (bKey in new_states):
+                    (new_states[bKey])[0]  = set ( list((new_states[bKey])[0])+ list((bPois[bKey])[0]))
                 else:
-                    new_pois[bKey] = bPois[bKey]
+                    new_states[bKey] = bPois[bKey]
 
             #update medioid
             for mkey in aux_dict.keys():
-                trialMobilityTraces=list((new_pois[mkey])[0])
+                trialMobilityTraces=list((new_states[mkey])[0])
                 medioid = MobilityTrace.computeMediod(trialMobilityTraces)
-                (new_pois[mkey])[1] = medioida
+                (new_states[mkey])[1] = medioida
         else:
             #merge dictionaries but only medioids (discarting mts)
             for aKey in aPois.keys():
                 aux_value = list()
                 aux_value.append((aPois[aKey])[1])
-                new_pois[aKey] = aux_value
+                new_states[aKey] = aux_value
 
             for bKey in bPois.keys():
-                if (bKey in new_pois):
-                    new_pois[bKey].append( (bPois[bKey])[1]  )#append medioid
+                if (bKey in new_states):
+                    new_states[bKey].append( (bPois[bKey])[1]  )#append medioid
                 else:
                     aux_value = list()
                     aux_value.append((bPois[bKey])[1])
-                    new_pois[bKey] = aux_value
+                    new_states[bKey] = aux_value
 
 
-        return new_pois
+        return new_states
 #end newPois
 
     @classmethod
-    def newTrajectories(cls, aMmc,bMmc,close_pois_dict):
+    def newTrajectories(cls, aMmc,bMmc,close_states_dict):
 
         aTrajectory = aMmc._dict_trajectory
         bTrajectory = bMmc._dict_trajectory
@@ -1023,7 +944,7 @@ class Mmc(object):
 
         #Maps only labels to need to be renamed
         aux_dict=dict()
-        for key, val in close_pois_dict.items():
+        for key, val in close_states_dict.items():
             if (len(val) > 0):
                 aux_dict[key] = val
 
@@ -1032,10 +953,10 @@ class Mmc(object):
             beginLabel = str(bKey[0])+'b'
             endLabel = str(bKey[1])+'b'
 
-            if ((beginLabel in close_pois_dict) & (endLabel in close_pois_dict)):
+            if ((beginLabel in close_states_dict) & (endLabel in close_states_dict)):
                 pass
-            #we have the beginLabel in close_pois_dictve, we look for the endLabel
-            elif (beginLabel in close_pois_dict):
+            #we have the beginLabel in close_states_dictve, we look for the endLabel
+            elif (beginLabel in close_states_dict):
                 for item in aux_dict:
                     aux_values = aux_dict[item]
                     for val in aux_values:
@@ -1072,18 +993,18 @@ class Mmc(object):
 
 
     @classmethod
-    def mergeTransMatrix(cls,aMmc,bMmc,close_poiss_dict):
+    def mergeTransMatrix(cls,aMmc,bMmc,close_statess_dict):
         """
             @param aMmc: is the base mobility mmodel
             @param bMmc: is the mobility model to add
-            @param close_poiss_dict: is a dictionary that maps pois of both aMmc and bMmc
+            @param close_statess_dict: is a dictionary that maps pois of both aMmc and bMmc
             returns: the new transition matrix and the new labels of the matrix
         """
         aMatrixLabels=aMmc._spatioTemporalLabels
         bMatrixLabels=bMmc._spatioTemporalLabels
 
         # Normalize names of labels in models A and B to merge
-        for key in close_poiss_dict.keys():
+        for key in close_statess_dict.keys():
             size = len(str(key))
             model = (str(key))[size-1:]
             poi = ((str(key))[:size-1])
@@ -1096,10 +1017,10 @@ class Mmc(object):
                         label[0] = key
             elif (model ==  'a'):
                 # update labels in model a
-                labelSize = len(close_poiss_dict[key])
+                labelSize = len(close_statess_dict[key])
                 # update all pois that belong to the same poi in the A model
                 if ( labelSize > 0 ):
-                    labelsToChange  = close_poiss_dict[key]
+                    labelsToChange  = close_statess_dict[key]
 
                     for item in labelsToChange:
                         for label in bMatrixLabels:
@@ -1166,38 +1087,38 @@ class Mmc(object):
                 another, to consider two pois mergable
         """
         #aMmc looks for colsest pois in bMmc based on stationary values
-        aPois = list(aMmc._pois.keys())
+        aPois = list(aMmc._states.keys())
         aStationaryVec = list(aMmc._cumulatedStationary.values())
-        bPois = list(bMmc._pois.keys())
+        bPois = list(bMmc._states.keys())
         #aStationaryVec = aMmc._cumulatedStationary
 
         #sorts the pois of the firs model
         sortStationary, sortPois = zip(*sorted(zip(aStationaryVec,aPois)))
-        close_poiss_dict = dict()
+        close_statess_dict = dict()
         mapPois = list () #auxiliar list of pois in mmc B  belonging to mmc A
 
         #for all pois in mmc A:
         for aPoi in sortPois:
-            aMedioid = (aMmc._pois).get(aPoi)[1]
+            aMedioid = (aMmc._states).get(aPoi)[1]
             #we look for those poi in mmc B close to poi A
             for bPoi in bPois:
-                bMedioid = (bMmc._pois).get(bPoi)[1]
+                bMedioid = (bMmc._states).get(bPoi)[1]
 
                 if (aMedioid.distance(bMedioid)<=threshold):
                     mapPois.append(bPoi)
                     bPois.remove(bPoi)
 
             #add list of close pois
-            close_poiss_dict[str(aPoi)+'a'] = list(mapPois)
+            close_statess_dict[str(aPoi)+'a'] = list(mapPois)
             mapPois = list ()
 
         if (len(bPois) > 0):
             for bPoi in bPois:
-                close_poiss_dict[str(bPoi)+'b'] = mapPois
+                close_statess_dict[str(bPoi)+'b'] = mapPois
                 mapPois = list()
 
 
-        return close_poiss_dict
+        return close_statess_dict
     #end mapClosePois
 #################################################
 #               Export csv to map
@@ -1211,8 +1132,8 @@ class Mmc(object):
             oWriter = csv.writer(csvfile, delimiter=';', quotechar=' ', quoting=csv.QUOTE_ALL)
             oWriter.writerow(["poi","lat","lon"])
 
-            for poi in self._pois:
-                medioid=(self._pois[poi])[1]
+            for poi in self._states:
+                medioid=(self._states[poi])[1]
                 oWriter.writerow([poi,medioid.latitude,+medioid.longitude])
 
 
