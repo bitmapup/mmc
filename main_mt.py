@@ -102,6 +102,7 @@ def buildSubscribersMmc (mtFile):
 		)
 	oMmc.buildModel()
 	oMmc.export(outputFolder)
+	print (oMmc._spatiaTemporallLabeledTrailmt)
 
 #end buildSubscribersMmc
 
@@ -153,22 +154,4 @@ if __name__ == "__main__":
 	    # create output folder
 	    if not exists(outputFilePath):
     		makedirs(outputFilePath)
-	    #Multiprocessing
-	    t_begin =  datetime.datetime.now()
-	    t_end =  datetime.datetime.now()
-	    try:
-		    t_begin =  datetime.datetime.now()
-		    #use all available cores, otherwise specify the number you want as an argument
-		    pool = multiprocessing.Pool(11) 
-		    #logfile=open("logusers/users_{}.txt".format(experimentName),"w")
-		    logfile=open(LOGPATH,"w")
-		    for f in onlyfiles:
-			logfile.write("{}\n".format(f))
-			pool.apply_async(buildSubscribersMmc, [f])
-		    pool.close()
-		    pool.join()
-		    t_end =  datetime.datetime.now()
-		    print "The work end successfully in {} time".format(str(t_end-t_begin))
-	    finally:
-		    print "[If there are 2 messages with the same time, work is OK] The work did not end  successfully in {} time".format(str(t_end-t_begin))
-	    #buildSubscribersMmc("113161.csv")
+	    buildSubscribersMmc("113161.csv")
